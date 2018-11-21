@@ -62,6 +62,7 @@ func AddCommands(cmd *cobra.Command, dockerCli command.Cli) {
 		registry.NewLoginCommand(dockerCli),
 		registry.NewLogoutCommand(dockerCli),
 		registry.NewSearchCommand(dockerCli),
+		registry.NewRegistryCommand(dockerCli),
 
 		// secret
 		secret.NewSecretCommand(dockerCli),
