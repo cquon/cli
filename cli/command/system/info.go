@@ -527,6 +527,8 @@ func getRegistryInfo(dockerCli command.Cli, hostname string) string {
 			panic(err)
 		}
 		return string(b)
+	} else if response.StatusCode == 403 {
+		fmt.Printf("Logged in user not authorized to see registry information. Contact a system administrator for access.")
 	}
 	return ""
 }
