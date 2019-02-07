@@ -129,7 +129,7 @@ func showLocalImages(dockerCli command.Cli, args []string) {
 	d := getImagesData(args)
 
 	w := tabwriter.NewWriter(os.Stdout, 20, 0, 1, ' ', 0)
-	fmt.Fprintln(w, "REPOSITORY\tTAG\tIMAGE ID\tCREATED\tSIZE\tREGISTRY")
+	fmt.Fprintln(w, "REPOSITORY\tTAG\tIMAGE ID\tCREATED\tSIZE")
 	for _, i := range d {
 		digests := make(map[string]string)
 		if i.RepoDigests != nil {
@@ -143,17 +143,8 @@ func showLocalImages(dockerCli command.Cli, args []string) {
 			s := humanize.Bytes(i.Size)
 			ct := humanize.Time(time.Unix(i.Created, 0))
 			for _, t := range i.RepoTags {
-				reg := ""
 				rt := strings.Split(t, ":")
-				if rt[0] != "<none>" {
-					_, ok := digests[rt[0]]
-					if ok {
-						if digestExistsInRegistry(dockerCli, rt[0], digests[rt[0]]) {
-							reg = "*"
-						}
-					}
-				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", rt[0], rt[1], id[1][:12], ct, s, reg)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", rt[0], rt[1], id[1][:12], ct, s)
 			}
 		}
 	}
