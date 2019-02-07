@@ -4,6 +4,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"net/http"
+	"io/ioutil"
+	"crypto/tls"
+	"encoding/json"
 
 	"github.com/docker/cli/cli"
 	"github.com/docker/cli/cli/command"
@@ -18,6 +22,7 @@ type inspectOptions struct {
 	format      string
 	inspectType string
 	size        bool
+	remote		bool
 	ids         []string
 }
 
@@ -27,11 +32,16 @@ func NewInspectCommand(dockerCli command.Cli) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "inspect [OPTIONS] NAME|ID [NAME|ID...]",
-		Short: "Return low-level information on Docker objects",
+		Short: "Return low-level information on local or remote Docker objects",
 		Args:  cli.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.ids = args
-			return runInspect(dockerCli, opts)
+			if opts.remote {
+				inspectRegistryImage(dockerCli, args)
+				return nil
+			} else {
+				return runInspect(dockerCli, opts)
+			}
 		},
 	}
 
@@ -39,6 +49,7 @@ func NewInspectCommand(dockerCli command.Cli) *cobra.Command {
 	flags.StringVarP(&opts.format, "format", "f", "", "Format the output using the given Go template")
 	flags.StringVar(&opts.inspectType, "type", "", "Return JSON for specified type")
 	flags.BoolVarP(&opts.size, "size", "s", false, "Display total file sizes if the type is container")
+	flags.BoolVar(&opts.remote, "remote", false, "Display image information on a remote Registry object")
 
 	return cmd
 }
@@ -215,4 +226,128 @@ func isErrSkippable(err error) bool {
 	return apiclient.IsErrNotFound(err) ||
 		strings.Contains(err.Error(), "not supported") ||
 		strings.Contains(err.Error(), "invalid reference format")
+}
+
+
+
+func inspectRegistryImage(dockerCli command.Cli, args []string) {
+	tag := getGUNParts(args[0])
+	_, s := getManifest(dockerCli, tag.Hostname, tag.Repository, tag.Tag)
+	fmt.Println(s)
+}
+
+func getManifest(dockerCli command.Cli, hostname string, reponame string, digest string) (*DTRImageManifest, string) {
+	if hostname == "" {
+		hostname = "registry-1.docker.io"
+	}
+
+	if !strings.Contains(reponame, "/") {
+		reponame = "library/" + reponame
+	}
+
+	url := fmt.Sprintf("https://%s/api/v0/repositories/%s/tags/%s", hostname, reponame, digest)
+
+	// For pulling directly from registry
+	// url := fmt.Sprintf("https://%s/v2/%s/manifests/%s", hostname, reponame, digest)
+
+	req, err := http.NewRequest("GET", url, nil)
+	registryCfg, err := dockerCli.ConfigFile().GetAuthConfig(hostname)
+	req.SetBasicAuth(registryCfg.Username, registryCfg.IdentityToken)
+
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+
+	httpc := &http.Client{Transport: tr}
+	response, err := httpc.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode == 200 {
+		body, err := ioutil.ReadAll(response.Body)
+		if err != nil {
+			panic(err)
+		}
+		var manifests []DTRImageData
+		err = json.Unmarshal(body, &manifests)
+		if err != nil {
+			panic(err)
+		}
+		return &manifests[0].Manifest, string(body)
+	}
+	return nil, ""
+}
+
+func getGUNParts(reponame string) TagData {
+	var tag TagData
+
+	// Valid forms:
+	//	<hostname>/<namespace>/<repo>:<tag>
+	//	<hostname>/<namespace>/<repo>
+	//	<namespace>/<repo>:<tag>            Defaults to Hub
+	//	<namespace>/<repo>                  Defaults to Hub
+	//	<hostname with dots>/<namespace>
+	//	<repo>:<tag>                        Defaults to Hub Official repo
+	//	<repo>                              Defaults to Hub Official repo
+	//	<hostname with dots>
+
+	tp := strings.Split(reponame, ":")
+	if len(tp) > 1 {
+		tag.Tag = tp[1]
+	}
+
+	s := strings.Split(tp[0], "/")
+	if len(s) == 1 {
+		if strings.ContainsRune(s[0], '.') {
+			tag.Hostname = s[0]
+		} else {
+			tag.Repository = s[0]
+		}
+	} else if  len(s) == 2 {
+		if len(tp) == 1 && strings.ContainsRune(s[0], '.') {
+			tag.Hostname = s[0]
+			tag.Repository = s[1]
+		} else {
+			tag.Repository = tp[0]
+		}
+	} else if len(s) == 3 {
+		tag.Hostname = s[0]
+		tag.Repository = s[1] + "/" + s[2]
+	}
+	return tag
+}
+
+type TagData struct {
+	Hostname   string
+	Namespace  string
+	Repository string
+	Tag        string
+}
+
+type DTRImageData struct {
+	Id        string `json:"digest"`
+	Name      string `json:"name"`
+	AuthorId  string `json:"author"`
+	UpdatedAt string `json:"updatedAt"`
+	CreatedAt string `json:"createdAt"`
+	Manifest  DTRImageManifest `json:"manifest"`
+}
+
+type DTRImageManifest struct {
+	Id              string `json:"digest"`
+	Digest          string `json:"configDigest"`
+	MediaType       string `json:"mediaType"`
+	ConfigMediaType string `json:"configMediaType"`
+	Size		uint64 `json:"size"`
+	CreatedAt       string `json:"createdAt"`
+	Dockerfile      []DTRDockerfileEntry `json:"dockerfile"`
+}
+type DTRDockerfileEntry struct {
+	Line      string `json:"line"`
+	Digest    string `json:"layerDigest"`
+	Size      uint64 `json:"size"`
+	MediaType string `json:"mediaType"`
+	IsEmpty   bool `json:"isEmpty"`
 }
