@@ -30,6 +30,7 @@ type imagesOptions struct {
 	noTrunc     bool
 	showDigests bool
 	remote		bool
+	verbose		bool
 	format      string
 	filter      opts.FilterOpt
 }
@@ -46,9 +47,12 @@ func NewImagesCommand(dockerCli command.Cli) *cobra.Command {
 			if len(args) > 0 {
 				options.matchName = args[0]
 			}
-			showImages(dockerCli, args, options.remote)
-			return nil
-			//return runImages(dockerCli, options)
+			if options.remote {
+				showImages(dockerCli, args, options.remote, options.verbose)
+				return nil
+			} else {
+				return runImages(dockerCli, options)
+			}
 		},
 	}
 
@@ -59,6 +63,7 @@ func NewImagesCommand(dockerCli command.Cli) *cobra.Command {
 	flags.BoolVar(&options.noTrunc, "no-trunc", false, "Don't truncate output")
 	flags.BoolVar(&options.showDigests, "digests", false, "Show digests")
 	flags.BoolVar(&options.remote, "remote", false, "Show images from remote registry")
+	flags.BoolVar(&options.verbose, "verbose", false, "Show verbose output")
 	flags.StringVar(&options.format, "format", "", "Pretty-print images using a Go template")
 	flags.VarP(&options.filter, "filter", "f", "Filter output based on conditions provided")
 
@@ -111,7 +116,7 @@ func runImages(dockerCli command.Cli, options imagesOptions) error {
 }
 
 
-func showImages(dockerCli command.Cli, args []string, remote bool) {
+func showImages(dockerCli command.Cli, args []string, remote bool, verbose bool) {
 	if !remote {
 		showLocalImages(dockerCli, args)
 	} else {
@@ -120,7 +125,7 @@ func showImages(dockerCli command.Cli, args []string, remote bool) {
 		if d.Repository == "" {
 			showRemoteRepos(dockerCli, d)
 		} else {
-			showRemoteImages(dockerCli, d)
+			showRemoteImages(dockerCli, d, verbose)
 		}
 	}
 }
@@ -151,7 +156,7 @@ func showLocalImages(dockerCli command.Cli, args []string) {
 	w.Flush()
 }
 
-func showRemoteImages(dockerCli command.Cli, t TagData) {
+func showRemoteImages(dockerCli command.Cli, t TagData, verbose bool) {
 	d := getDTRImages(dockerCli, t)
 
 	w := tabwriter.NewWriter(os.Stdout, 20, 0, 1, ' ', 0)
@@ -161,8 +166,13 @@ func showRemoteImages(dockerCli command.Cli, t TagData) {
 		id := strings.Split(i.Id, ":")
 		s := humanize.Bytes(i.Manifest.Size)
 		tt, _ := time.Parse(time.RFC3339, i.CreatedAt)
-		ct := humanize.Time(tt)
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", repo, i.Name, id[1][:12], ct, s)
+		var timeString string
+		if verbose {
+			timeString = tt.String()
+		} else {
+			timeString = humanize.Time(tt)
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", repo, i.Name, id[1][:12], timeString, s)
 	}
 	w.Flush()
 }
