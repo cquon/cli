@@ -6,6 +6,9 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"net/http"
+	"io/ioutil"
+	"crypto/tls"
 
 	"github.com/docker/cli/cli"
 	pluginmanager "github.com/docker/cli/cli-plugins/manager"
@@ -20,6 +23,7 @@ import (
 
 type infoOptions struct {
 	format string
+	remote bool
 }
 
 type clientInfo struct {
@@ -45,17 +49,26 @@ func NewInfoCommand(dockerCli command.Cli) *cobra.Command {
 	var opts infoOptions
 
 	cmd := &cobra.Command{
-		Use:   "info [OPTIONS]",
-		Short: "Display system-wide information",
-		Args:  cli.NoArgs,
+		Use:   "info [OPTIONS] [REGISTRY HOSTNAME]",
+		Short: "Display system or registry information",
+		Args:  cli.RequiresRangeArgs(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInfo(cmd, dockerCli, &opts)
+			if opts.remote {
+				if len(args) != 1 {
+					return fmt.Errorf("`docker info` with --remote flag must specify a [REGISTRY HOSTNAME] argument")
+				}
+				showRegistryInfo(dockerCli, args)
+				return nil
+			} else {
+				return runInfo(cmd, dockerCli, &opts)
+			}
 		},
 	}
 
 	flags := cmd.Flags()
 
 	flags.StringVarP(&opts.format, "format", "f", "", "Format the output using the given Go template")
+	flags.BoolVar(&opts.remote, "remote", false, "Show images from remote registry")
 
 	return cmd
 }
@@ -484,4 +497,36 @@ func fprintlnNonEmpty(w io.Writer, label, value string) {
 	if value != "" {
 		fmt.Fprintln(w, label, value)
 	}
+}
+
+func showRegistryInfo(dockerCli command.Cli, args []string) {
+	fmt.Printf("%s\n", getRegistryInfo(dockerCli, args[0]))
+}
+
+func getRegistryInfo(dockerCli command.Cli, hostname string) string {
+	url := fmt.Sprintf("https://%s/api/v0/meta/settings", hostname)
+
+	req, err := http.NewRequest("GET", url, nil)
+	registryCfg, err := dockerCli.ConfigFile().GetAuthConfig(hostname)
+	req.SetBasicAuth(registryCfg.Username, registryCfg.IdentityToken)
+
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+
+	httpc := &http.Client{Transport: tr}
+	response, err := httpc.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode == 200 {
+		b, err := ioutil.ReadAll(response.Body)
+		if err != nil {
+			panic(err)
+		}
+		return string(b)
+	}
+	return ""
 }
