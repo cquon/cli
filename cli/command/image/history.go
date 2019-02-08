@@ -41,6 +41,7 @@ func NewHistoryCommand(dockerCli command.Cli) *cobra.Command {
 			opts.image = args[0]
 			if opts.remote {
 				showRemoteHistory(dockerCli, args)
+				return nil
 			}
 			return runHistory(dockerCli, opts)
 		},
